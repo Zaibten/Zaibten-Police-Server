@@ -38,6 +38,40 @@ const policeStationSchema = new mongoose.Schema({
 
 const PoliceStation = mongoose.model('PoliceStation', policeStationSchema);
 
+// POST: Add police station
+app.post('/api/police-station', async (req, res) => {
+  try {
+    const { name, contact, location, latitude, longitude } = req.body;
+
+    // Check if a station exists with the same name OR contact OR location OR latitude OR longitude
+    const existingStation = await PoliceStation.findOne({
+      $or: [
+        { name: name.trim() },
+        { contact: contact.trim() },
+        { location: location.trim() },
+        { latitude: latitude },
+        { longitude: longitude }
+      ]
+    });
+
+    if (existingStation) {
+      return res.status(409).json({
+        success: false,
+message: "Duplicate entry detected: A police station record with matching name, contact number, location, latitude, or longitude already exists in the system."
+      });
+    }
+
+    // No duplicates, proceed to save
+    const station = new PoliceStation(req.body);
+    const saved = await station.save();
+    res.status(201).json({ success: true, message: "Station added successfully", data: saved });
+  } catch (err) {
+    console.error(err);
+    res.status(400).json({ success: false, message: "Failed to add station", error: err.message });
+  }
+});
+
+
 // Routes
 app.get('/', (req, res) => {
   res.send('🚓 Police Station API is live!');
@@ -191,6 +225,35 @@ app.get('/api/constablesdata', async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).send('Error fetching constables');
+  }
+});
+
+// PUT /api/constables/:id  -- Update constable by ID
+app.put('/api/updateconstables/:id', async (req, res) => {
+  const { id } = req.params;
+  const updateData = req.body;
+
+  try {
+    const updatedConstable = await Constable.findByIdAndUpdate(id, updateData, { new: true, runValidators: true });
+    if (!updatedConstable) {
+      return res.status(404).json({ message: 'Constable not found' });
+    }
+    res.json(updatedConstable);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+app.delete('/api/deleteconstables/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const deleted = await Constable.findByIdAndDelete(id);
+    if (!deleted) {
+      return res.status(404).json({ message: "Constable not found" });
+    }
+    res.json({ message: "Constable deleted successfully" });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
 });
 
