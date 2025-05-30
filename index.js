@@ -269,7 +269,7 @@ app.get("/api/constable/:badgeNumber", async (req, res) => {
   }
 });
 
-
+// duty schema in mongo db
 const dutySchema = new mongoose.Schema({
   badgeNumber: String,
   name: String,
@@ -282,9 +282,12 @@ const dutySchema = new mongoose.Schema({
   yCoord: Number,
   shift: String,
   dutyType: { type: String, enum: ["single", "multiple"], default: "single" },
-  dutyDate: Date,
+  dutyDate: Date,  // Used for both single and per-day record in multiple
+  fromDate: Date,  // Optional
+  toDate: Date,    // Optional
   batchNumber: String,
 });
+
 
 const Duty = mongoose.model("Duty", dutySchema);
 
@@ -304,6 +307,8 @@ app.post("/api/assign-duty", async (req, res) => {
       shift,
       dutyType,
       dutyDate,
+      fromDate,
+      toDate,
       batchNumber,
     } = req.body;
 
@@ -311,41 +316,89 @@ app.post("/api/assign-duty", async (req, res) => {
       return res.status(400).json({ message: "Status is not active" });
     }
 
-    // Check if policeman already assigned to duty on same dutyDate, batchNumber, and shift
-    const conflict = await Duty.findOne({
-      badgeNumber,
-      dutyDate: new Date(dutyDate),
-      batchNumber,
-      shift,
-    });
+    const dutiesToSave = [];
 
-    if (conflict) {
-      return res.status(400).json({ message: "Policeman already assigned to another location at this shift and date in the same batch." });
+    if (dutyType === "multiple") {
+      const start = new Date(fromDate);
+      const end = new Date(toDate);
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        const day = new Date(d);
+        // Check for conflict
+        const conflict = await Duty.findOne({
+          badgeNumber,
+          dutyDate: day,
+          batchNumber,
+          shift,
+        });
+
+        if (conflict) {
+          return res.status(400).json({
+            message: `Conflict on ${day.toISOString().split("T")[0]}: already assigned`,
+          });
+        }
+
+        dutiesToSave.push({
+          badgeNumber,
+          name,
+          rank,
+          status,
+          contact,
+          policeStation,
+          location,
+          xCoord,
+          yCoord,
+          shift,
+          dutyType,
+          dutyDate: day,
+          fromDate: new Date(fromDate),
+          toDate: new Date(toDate),
+          batchNumber,
+        });
+      }
+
+      await Duty.insertMany(dutiesToSave);
+    } else {
+      const date = new Date(dutyDate);
+
+      const conflict = await Duty.findOne({
+        badgeNumber,
+        dutyDate: date,
+        batchNumber,
+        shift,
+      });
+
+      if (conflict) {
+        return res.status(400).json({
+          message: "Policeman already assigned to another location on this day and shift",
+        });
+      }
+
+      const newDuty = new Duty({
+        badgeNumber,
+        name,
+        rank,
+        status,
+        contact,
+        policeStation,
+        location,
+        xCoord,
+        yCoord,
+        shift,
+        dutyType,
+        dutyDate: date,
+        batchNumber,
+      });
+
+      await newDuty.save();
     }
 
-    const newDuty = new Duty({
-      badgeNumber,
-      name,
-      rank,
-      status,
-      contact,
-      policeStation,
-      location,
-      xCoord,
-      yCoord,
-      shift,
-      dutyType,
-      dutyDate: new Date(dutyDate),
-      batchNumber,
-    });
-
-    await newDuty.save();
     res.json({ message: "Duty assigned successfully" });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });
   }
 });
+
 
 // Start server
 app.listen(PORT, () => {
