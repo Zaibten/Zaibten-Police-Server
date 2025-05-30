@@ -244,6 +244,7 @@ app.put('/api/updateconstables/:id', async (req, res) => {
   }
 });
 
+// delete constable api
 app.delete('/api/deleteconstables/:id', async (req, res) => {
   const { id } = req.params;
   try {
@@ -257,6 +258,94 @@ app.delete('/api/deleteconstables/:id', async (req, res) => {
   }
 });
 
+// fetch police man with batch number
+app.get("/api/constable/:badgeNumber", async (req, res) => {
+  try {
+    const constable = await Constable.findOne({ badgeNumber: req.params.badgeNumber });
+    if (!constable) return res.status(404).json({ error: "Not found" });
+    res.json(constable);
+  } catch (err) {
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+
+const dutySchema = new mongoose.Schema({
+  badgeNumber: String,
+  name: String,
+  rank: String,
+  status: String,
+  contact: String,
+  policeStation: String,
+  location: String,
+  xCoord: Number,
+  yCoord: Number,
+  shift: String,
+  dutyType: { type: String, enum: ["single", "multiple"], default: "single" },
+  dutyDate: Date,
+  batchNumber: String,
+});
+
+const Duty = mongoose.model("Duty", dutySchema);
+
+// API to assign duty
+app.post("/api/assign-duty", async (req, res) => {
+  try {
+    const {
+      badgeNumber,
+      name,
+      rank,
+      status,
+      contact,
+      policeStation,
+      location,
+      xCoord,
+      yCoord,
+      shift,
+      dutyType,
+      dutyDate,
+      batchNumber,
+    } = req.body;
+
+    if (status.toLowerCase() !== "active") {
+      return res.status(400).json({ message: "Status is not active" });
+    }
+
+    // Check if policeman already assigned to duty on same dutyDate, batchNumber, and shift
+    const conflict = await Duty.findOne({
+      badgeNumber,
+      dutyDate: new Date(dutyDate),
+      batchNumber,
+      shift,
+    });
+
+    if (conflict) {
+      return res.status(400).json({ message: "Policeman already assigned to another location at this shift and date in the same batch." });
+    }
+
+    const newDuty = new Duty({
+      badgeNumber,
+      name,
+      rank,
+      status,
+      contact,
+      policeStation,
+      location,
+      xCoord,
+      yCoord,
+      shift,
+      dutyType,
+      dutyDate: new Date(dutyDate),
+      batchNumber,
+    });
+
+    await newDuty.save();
+    res.json({ message: "Duty assigned successfully" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
 
 // Start server
 app.listen(PORT, () => {
