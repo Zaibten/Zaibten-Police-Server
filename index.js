@@ -330,6 +330,7 @@ const dutySchema = new mongoose.Schema({
   fromDate: Date,  // Optional
   toDate: Date,    // Optional
   batchNumber: String,
+  remarks: String,
 });
 
 
@@ -354,53 +355,51 @@ app.post("/api/assign-duty", async (req, res) => {
       fromDate,
       toDate,
       batchNumber,
+      remarks,
     } = req.body;
 
     if (status.toLowerCase() !== "active") {
       return res.status(400).json({ message: "Status is not active" });
     }
 
-    const dutiesToSave = [];
-
     if (dutyType === "multiple") {
       const start = new Date(fromDate);
       const end = new Date(toDate);
-      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-        const day = new Date(d);
-        // Check for conflict
-        const conflict = await Duty.findOne({
-          badgeNumber,
-          dutyDate: day,
-          batchNumber,
-          shift,
-        });
 
-        if (conflict) {
-          return res.status(400).json({
-            message: `Conflict on ${day.toISOString().split("T")[0]}: already assigned`,
-          });
-        }
+      const conflict = await Duty.findOne({
+        badgeNumber,
+        dutyDate: { $gte: start, $lte: end },
+        batchNumber,
+        shift,
+      });
 
-        dutiesToSave.push({
-          badgeNumber,
-          name,
-          rank,
-          status,
-          contact,
-          policeStation,
-          location,
-          xCoord,
-          yCoord,
-          shift,
-          dutyType,
-          dutyDate: day,
-          fromDate: new Date(fromDate),
-          toDate: new Date(toDate),
-          batchNumber,
+      if (conflict) {
+        return res.status(400).json({
+          message: `Conflict: policeman already assigned between ${fromDate} and ${toDate}`,
         });
       }
 
-      await Duty.insertMany(dutiesToSave);
+      // ✅ Insert only one record for the full range
+      const duty = new Duty({
+        badgeNumber,
+        name,
+        rank,
+        status,
+        contact,
+        policeStation,
+        location,
+        xCoord,
+        yCoord,
+        shift,
+        dutyType,
+        dutyDate: fromDate, // optional or set to null
+        fromDate: new Date(fromDate),
+        toDate: new Date(toDate),
+        batchNumber,
+        remarks,
+      });
+
+      await duty.save();
     } else {
       const date = new Date(dutyDate);
 
@@ -431,6 +430,7 @@ app.post("/api/assign-duty", async (req, res) => {
         dutyType,
         dutyDate: date,
         batchNumber,
+        remarks,
       });
 
       await newDuty.save();
@@ -439,6 +439,43 @@ app.post("/api/assign-duty", async (req, res) => {
     res.json({ message: "Duty assigned successfully" });
   } catch (err) {
     console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+
+// API to get all duties
+app.get('/api/duties', async (req, res) => {
+  try {
+    const duties = await Duty.find();
+    res.json(duties);
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching duties', error });
+  }
+});
+
+// 🔹 PUT update duty by ID
+app.put('/api/duties/:id', async (req, res) => {
+  const { id } = req.params
+  try {
+    const updatedDuty = await Duty.findByIdAndUpdate(id, req.body, { new: true })
+    if (!updatedDuty) return res.status(404).json({ error: 'Duty not found' })
+    res.json(updatedDuty)
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update duty' })
+  }
+})
+
+// API to delete a duty by id
+app.delete("/api/duties/:id", async (req, res) => {
+  try {
+    const deletedDuty = await Duty.findByIdAndDelete(req.params.id);
+    if (!deletedDuty) {
+      return res.status(404).json({ message: "Duty not found" });
+    }
+    res.json({ message: "Duty deleted successfully" });
+  } catch (error) {
+    console.error(error);
     res.status(500).json({ message: "Server error" });
   }
 });
