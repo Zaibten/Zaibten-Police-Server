@@ -4,6 +4,11 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const app = express();
+const multer = require('multer');
+const fs = require('fs');
+const path = require('path');
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
 
 // Load environment variables
 const PORT = process.env.PORT || 3000;
@@ -21,7 +26,14 @@ mongoose.connect(MongoURL, {
 .then(() => console.log("✅ Connected to MongoDB"))
 .catch(err => console.error("❌ MongoDB connection error:", err));
 
-// Define PoliceStation schema
+// --- Multer setup for image upload ---
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, 'uploads/'),
+  filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
+});
+const upload = multer({ storage });
+
+// --- MongoDB Schema with image field ---
 const policeStationSchema = new mongoose.Schema({
   name: { type: String, required: true },
   incharge: { type: String, required: true },
@@ -33,43 +45,57 @@ const policeStationSchema = new mongoose.Schema({
   latitude: { type: String },
   longitude: { type: String },
   weapons: [String],
-  vehicles: [String]
+  vehicles: [String],
+  image: { type: String }, // base64 image
 }, { timestamps: true });
 
 const PoliceStation = mongoose.model('PoliceStation', policeStationSchema);
 
-// POST: Add police station
-app.post('/api/police-station', async (req, res) => {
+// --- POST endpoint with image upload ---
+app.post('/api/police-station', upload.single('image'), async (req, res) => {
   try {
     const { name, contact, location, latitude, longitude } = req.body;
 
-    // Check if a station exists with the same name OR contact OR location OR latitude OR longitude
     const existingStation = await PoliceStation.findOne({
       $or: [
         { name: name.trim() },
         { contact: contact.trim() },
         { location: location.trim() },
-        { latitude: latitude },
-        { longitude: longitude }
+        { latitude },
+        { longitude }
       ]
     });
 
     if (existingStation) {
       return res.status(409).json({
         success: false,
-message: "Duplicate entry detected: A police station record with matching name, contact number, location, latitude, or longitude already exists in the system."
+        message: "Duplicate entry detected: A police station record with matching name, contact number, location, latitude, or longitude already exists in the system."
       });
     }
 
-    // No duplicates, proceed to save
-    const station = new PoliceStation(req.body);
+    let imageBase64 = null;
+    if (req.file) {
+      const imageBuffer = fs.readFileSync(req.file.path);
+      imageBase64 = imageBuffer.toString('base64');
+      fs.unlinkSync(req.file.path); // Clean up uploaded file
+    }
+
+    const station = new PoliceStation({
+      ...req.body,
+      weapons: JSON.parse(req.body.weapons || '[]'),
+      vehicles: JSON.parse(req.body.vehicles || '[]'),
+      image: imageBase64,
+    });
+
     const saved = await station.save();
     res.status(201).json({ success: true, message: "Station added successfully", data: saved });
+
   } catch (err) {
     console.error(err);
     res.status(400).json({ success: false, message: "Failed to add station", error: err.message });
   }
 });
+
 
 
 // Routes
@@ -144,23 +170,25 @@ const constableSchema = new mongoose.Schema({
   qualification: { type: String },
   weapons: [String],
   vehicles: [String],
-  remarks: { type: String }
+  remarks: { type: String },
+  image: { type: String }, // base64 string for the constable image
 }, { timestamps: true });
+
 
 const Constable = mongoose.model('Constable', constableSchema);
 
 // POST: Add new constable
-app.post('/api/constables', async (req, res) => {
+app.post('/api/constables', upload.single('image'), async (req, res) => {
   try {
-    const { badgeNumber, contactNumber, email, dob, joiningDate } = req.body;
+    const {
+      fullName, rank, badgeNumber, dob, gender,
+      contactNumber, email, address, policeStation,
+      joiningDate, status, qualification, weapons, vehicles, remarks
+    } = req.body;
 
-    // Check for duplicates
+    // Duplicate checks
     const existing = await Constable.findOne({
-      $or: [
-        { badgeNumber },
-        { contactNumber },
-        { email }
-      ]
+      $or: [{ badgeNumber }, { contactNumber }, { email }]
     });
 
     if (existing) {
@@ -170,7 +198,6 @@ app.post('/api/constables', async (req, res) => {
       });
     }
 
-    // Check date validity
     if (new Date(joiningDate) <= new Date(dob)) {
       return res.status(400).json({
         success: false,
@@ -178,7 +205,23 @@ app.post('/api/constables', async (req, res) => {
       });
     }
 
-    const constable = new Constable(req.body);
+    let imageBase64 = null;
+    if (req.file) {
+      const imageBuffer = fs.readFileSync(req.file.path);
+      imageBase64 = imageBuffer.toString('base64');
+      fs.unlinkSync(req.file.path); // remove temp file
+    }
+
+    const constable = new Constable({
+      fullName, rank, badgeNumber, dob, gender,
+      contactNumber, email, address, policeStation,
+      joiningDate, status, qualification,
+      weapons: JSON.parse(weapons || '[]'),
+      vehicles: JSON.parse(vehicles || '[]'),
+      remarks,
+      image: imageBase64
+    });
+
     const saved = await constable.save();
 
     res.status(201).json({
@@ -195,6 +238,7 @@ app.post('/api/constables', async (req, res) => {
     });
   }
 });
+
 
 // GET: Get all constables
 app.get('/api/constables', async (req, res) => {
