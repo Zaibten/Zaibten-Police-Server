@@ -1,14 +1,14 @@
 // index.js
-require('dotenv').config(); // Load .env
-const express = require('express');
-const mongoose = require('mongoose');
-const cors = require('cors');
+require("dotenv").config(); // Load .env
+const express = require("express");
+const mongoose = require("mongoose");
+const cors = require("cors");
 const app = express();
-const multer = require('multer');
-const fs = require('fs');
-const path = require('path');
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
+const multer = require("multer");
+const fs = require("fs");
+const path = require("path");
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+const bcrypt = require("bcrypt");
 
 // Load environment variables
 const PORT = process.env.PORT || 3000;
@@ -19,40 +19,44 @@ app.use(cors());
 app.use(express.json());
 
 // Connect to MongoDB
-mongoose.connect(MongoURL, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-})
-.then(() => console.log("✅ Connected to MongoDB"))
-.catch(err => console.error("❌ MongoDB connection error:", err));
+mongoose
+  .connect(MongoURL, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+  })
+  .then(() => console.log("✅ Connected to MongoDB"))
+  .catch((err) => console.error("❌ MongoDB connection error:", err));
 
 // --- Multer setup for image upload ---
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, 'uploads/'),
-  filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
+  destination: (req, file, cb) => cb(null, "uploads/"),
+  filename: (req, file, cb) => cb(null, Date.now() + "-" + file.originalname),
 });
 const upload = multer({ storage });
 
 // --- MongoDB Schema with image field ---
-const policeStationSchema = new mongoose.Schema({
-  name: { type: String, required: true },
-  incharge: { type: String, required: true },
-  contact: { type: String, required: true },
-  location: { type: String, required: true },
-  jailCapacity: { type: Number },
-  cctvCameras: { type: Number },
-  firsRegistered: { type: Number },
-  latitude: { type: String },
-  longitude: { type: String },
-  weapons: [String],
-  vehicles: [String],
-  image: { type: String }, // base64 image
-}, { timestamps: true });
+const policeStationSchema = new mongoose.Schema(
+  {
+    name: { type: String, required: true },
+    incharge: { type: String, required: true },
+    contact: { type: String, required: true },
+    location: { type: String, required: true },
+    jailCapacity: { type: Number },
+    cctvCameras: { type: Number },
+    firsRegistered: { type: Number },
+    latitude: { type: String },
+    longitude: { type: String },
+    weapons: [String],
+    vehicles: [String],
+    image: { type: String }, // base64 image
+  },
+  { timestamps: true }
+);
 
-const PoliceStation = mongoose.model('PoliceStation', policeStationSchema);
+const PoliceStation = mongoose.model("PoliceStation", policeStationSchema);
 
 // --- POST endpoint with image upload ---
-app.post('/api/police-station', upload.single('image'), async (req, res) => {
+app.post("/api/police-station", upload.single("image"), async (req, res) => {
   try {
     const { name, contact, location, latitude, longitude } = req.body;
 
@@ -62,164 +66,224 @@ app.post('/api/police-station', upload.single('image'), async (req, res) => {
         { contact: contact.trim() },
         { location: location.trim() },
         { latitude },
-        { longitude }
-      ]
+        { longitude },
+      ],
     });
 
     if (existingStation) {
       return res.status(409).json({
         success: false,
-        message: "Duplicate entry detected: A police station record with matching name, contact number, location, latitude, or longitude already exists in the system."
+        message:
+          "Duplicate entry detected: A police station record with matching name, contact number, location, latitude, or longitude already exists in the system.",
       });
     }
 
     let imageBase64 = null;
     if (req.file) {
       const imageBuffer = fs.readFileSync(req.file.path);
-      imageBase64 = imageBuffer.toString('base64');
+      imageBase64 = imageBuffer.toString("base64");
       fs.unlinkSync(req.file.path); // Clean up uploaded file
     }
 
     const station = new PoliceStation({
       ...req.body,
-      weapons: JSON.parse(req.body.weapons || '[]'),
-      vehicles: JSON.parse(req.body.vehicles || '[]'),
+      weapons: JSON.parse(req.body.weapons || "[]"),
+      vehicles: JSON.parse(req.body.vehicles || "[]"),
       image: imageBase64,
     });
 
     const saved = await station.save();
-    res.status(201).json({ success: true, message: "Station added successfully", data: saved });
-
+    res
+      .status(201)
+      .json({
+        success: true,
+        message: "Station added successfully",
+        data: saved,
+      });
   } catch (err) {
     console.error(err);
-    res.status(400).json({ success: false, message: "Failed to add station", error: err.message });
+    res
+      .status(400)
+      .json({
+        success: false,
+        message: "Failed to add station",
+        error: err.message,
+      });
   }
 });
 
-
-
 // Routes
-app.get('/', (req, res) => {
-  res.send('🚓 Police Station API is live!');
+app.get("/", (req, res) => {
+  res.send("🚓 Police Station API is live!");
 });
 
 // POST: Add police station
-app.post('/api/police-station', async (req, res) => {
+app.post("/api/police-station", async (req, res) => {
   try {
     const station = new PoliceStation(req.body);
     const saved = await station.save();
-    res.status(201).json({ success: true, message: "Station added successfully", data: saved });
+    res
+      .status(201)
+      .json({
+        success: true,
+        message: "Station added successfully",
+        data: saved,
+      });
   } catch (err) {
     console.error(err);
-    res.status(400).json({ success: false, message: "Failed to add station", error: err.message });
+    res
+      .status(400)
+      .json({
+        success: false,
+        message: "Failed to add station",
+        error: err.message,
+      });
   }
 });
 
 // GET: Get all police stations
-app.get('/api/getpolice-stations', async (req, res) => {
+app.get("/api/getpolice-stations", async (req, res) => {
   try {
     const stations = await PoliceStation.find().sort({ createdAt: -1 }); // latest first
     res.json({ success: true, data: stations });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ success: false, message: "Failed to get stations", error: err.message });
+    res
+      .status(500)
+      .json({
+        success: false,
+        message: "Failed to get stations",
+        error: err.message,
+      });
   }
 });
 
 // Update station by ID
-app.put('/api/stations/:id', async (req, res) => {
+app.put("/api/stations/:id", async (req, res) => {
   try {
-    const station = await PoliceStation.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    if (!station) return res.status(404).json({ error: 'Station not found' });
+    const station = await PoliceStation.findByIdAndUpdate(
+      req.params.id,
+      req.body,
+      { new: true }
+    );
+    if (!station) return res.status(404).json({ error: "Station not found" });
     res.json(station);
   } catch (err) {
-    console.error('❌ Error updating station:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error("❌ Error updating station:", err);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
 // DELETE: Delete police station by ID
-app.delete('/api/stations/:id', async (req, res) => {
+app.delete("/api/stations/:id", async (req, res) => {
   try {
     const deletedStation = await PoliceStation.findByIdAndDelete(req.params.id);
     if (!deletedStation) {
-      return res.status(404).json({ success: false, message: 'Station not found' });
+      return res
+        .status(404)
+        .json({ success: false, message: "Station not found" });
     }
-    res.json({ success: true, message: 'Station deleted successfully', data: deletedStation });
+    res.json({
+      success: true,
+      message: "Station deleted successfully",
+      data: deletedStation,
+    });
   } catch (err) {
-    console.error('❌ Error deleting station:', err);
-    res.status(500).json({ success: false, message: 'Internal server error' });
+    console.error("❌ Error deleting station:", err);
+    res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
 
-
-
 // Define Constable schema
-const constableSchema = new mongoose.Schema({
-  fullName: { type: String, required: true },
-  rank: { type: String, required: true },
-  badgeNumber: { type: String, required: true },
-  dob: { type: String, required: true },
-  gender: { type: String, required: true },
-  contactNumber: { type: String, required: true },
-  email: { type: String },
-  address: { type: String },
-  policeStation: { type: String, required: true },
-  joiningDate: { type: String, required: true },
-  status: { type: String, required: true },
-  qualification: { type: String },
-  weapons: [String],
-  vehicles: [String],
-  remarks: { type: String },
-  image: { type: String }, // base64 string for the constable image
-}, { timestamps: true });
+const constableSchema = new mongoose.Schema(
+  {
+    fullName: { type: String, required: true },
+    rank: { type: String, required: true },
+    badgeNumber: { type: String, required: true },
+    dob: { type: String, required: true },
+    gender: { type: String, required: true },
+    contactNumber: { type: String, required: true },
+    email: { type: String },
+    address: { type: String },
+    policeStation: { type: String, required: true },
+    joiningDate: { type: String, required: true },
+    status: { type: String, required: true },
+    qualification: { type: String },
+    weapons: [String],
+    vehicles: [String],
+    remarks: { type: String },
+    image: { type: String }, // base64 string for the constable image
+  },
+  { timestamps: true }
+);
 
-
-const Constable = mongoose.model('Constable', constableSchema);
+const Constable = mongoose.model("Constable", constableSchema);
 
 // POST: Add new constable
-app.post('/api/constables', upload.single('image'), async (req, res) => {
+app.post("/api/constables", upload.single("image"), async (req, res) => {
   try {
     const {
-      fullName, rank, badgeNumber, dob, gender,
-      contactNumber, email, address, policeStation,
-      joiningDate, status, qualification, weapons, vehicles, remarks
+      fullName,
+      rank,
+      badgeNumber,
+      dob,
+      gender,
+      contactNumber,
+      email,
+      address,
+      policeStation,
+      joiningDate,
+      status,
+      qualification,
+      weapons,
+      vehicles,
+      remarks,
     } = req.body;
 
     // Duplicate checks
     const existing = await Constable.findOne({
-      $or: [{ badgeNumber }, { contactNumber }, { email }]
+      $or: [{ badgeNumber }, { contactNumber }, { email }],
     });
 
     if (existing) {
       return res.status(400).json({
         success: false,
-        message: 'Duplicate Badge Number, Contact Number, or Email already exists'
+        message:
+          "Duplicate Badge Number, Contact Number, or Email already exists",
       });
     }
 
     if (new Date(joiningDate) <= new Date(dob)) {
       return res.status(400).json({
         success: false,
-        message: 'Joining Date must be after Date of Birth'
+        message: "Joining Date must be after Date of Birth",
       });
     }
 
     let imageBase64 = null;
     if (req.file) {
       const imageBuffer = fs.readFileSync(req.file.path);
-      imageBase64 = imageBuffer.toString('base64');
+      imageBase64 = imageBuffer.toString("base64");
       fs.unlinkSync(req.file.path); // remove temp file
     }
 
     const constable = new Constable({
-      fullName, rank, badgeNumber, dob, gender,
-      contactNumber, email, address, policeStation,
-      joiningDate, status, qualification,
-      weapons: JSON.parse(weapons || '[]'),
-      vehicles: JSON.parse(vehicles || '[]'),
+      fullName,
+      rank,
+      badgeNumber,
+      dob,
+      gender,
+      contactNumber,
+      email,
+      address,
+      policeStation,
+      joiningDate,
+      status,
+      qualification,
+      weapons: JSON.parse(weapons || "[]"),
+      vehicles: JSON.parse(vehicles || "[]"),
       remarks,
-      image: imageBase64
+      image: imageBase64,
     });
 
     const saved = await constable.save();
@@ -227,60 +291,68 @@ app.post('/api/constables', upload.single('image'), async (req, res) => {
     res.status(201).json({
       success: true,
       message: "Constable added successfully",
-      data: saved
+      data: saved,
     });
   } catch (err) {
     console.error("❌ Error adding constable:", err);
     res.status(400).json({
       success: false,
       message: "Failed to add constable",
-      error: err.message
+      error: err.message,
     });
   }
 });
 
-
 // GET: Get all constables
-app.get('/api/constables', async (req, res) => {
+app.get("/api/constables", async (req, res) => {
   try {
     const constables = await Constable.find().sort({ createdAt: -1 });
     res.json({ success: true, data: constables });
   } catch (err) {
     console.error("❌ Error getting constables:", err);
-    res.status(500).json({ success: false, message: "Failed to get constables", error: err.message });
+    res
+      .status(500)
+      .json({
+        success: false,
+        message: "Failed to get constables",
+        error: err.message,
+      });
   }
 });
 
 // API to get police stations names in dropdown
-app.get('/api/police-stationsfordropdown', async (req, res) => {
+app.get("/api/police-stationsfordropdown", async (req, res) => {
   try {
     const stations = await PoliceStation.find();
     res.json(stations);
   } catch (error) {
-    console.error('Error fetching police stations:', error);
-    res.status(500).json({ error: 'Server error' });
+    console.error("Error fetching police stations:", error);
+    res.status(500).json({ error: "Server error" });
   }
 });
 
-app.get('/api/constablesdata', async (req, res) => {
+app.get("/api/constablesdata", async (req, res) => {
   try {
     const constables = await Constable.find();
     res.json(constables);
   } catch (error) {
     console.error(error);
-    res.status(500).send('Error fetching constables');
+    res.status(500).send("Error fetching constables");
   }
 });
 
 // PUT /api/constables/:id  -- Update constable by ID
-app.put('/api/updateconstables/:id', async (req, res) => {
+app.put("/api/updateconstables/:id", async (req, res) => {
   const { id } = req.params;
   const updateData = req.body;
 
   try {
-    const updatedConstable = await Constable.findByIdAndUpdate(id, updateData, { new: true, runValidators: true });
+    const updatedConstable = await Constable.findByIdAndUpdate(id, updateData, {
+      new: true,
+      runValidators: true,
+    });
     if (!updatedConstable) {
-      return res.status(404).json({ message: 'Constable not found' });
+      return res.status(404).json({ message: "Constable not found" });
     }
     res.json(updatedConstable);
   } catch (error) {
@@ -289,7 +361,7 @@ app.put('/api/updateconstables/:id', async (req, res) => {
 });
 
 // delete constable api
-app.delete('/api/deleteconstables/:id', async (req, res) => {
+app.delete("/api/deleteconstables/:id", async (req, res) => {
   const { id } = req.params;
   try {
     const deleted = await Constable.findByIdAndDelete(id);
@@ -305,7 +377,9 @@ app.delete('/api/deleteconstables/:id', async (req, res) => {
 // fetch police man with batch number
 app.get("/api/constable/:badgeNumber", async (req, res) => {
   try {
-    const constable = await Constable.findOne({ badgeNumber: req.params.badgeNumber });
+    const constable = await Constable.findOne({
+      badgeNumber: req.params.badgeNumber,
+    });
     if (!constable) return res.status(404).json({ error: "Not found" });
     res.json(constable);
   } catch (err) {
@@ -326,13 +400,28 @@ const dutySchema = new mongoose.Schema({
   yCoord: Number,
   shift: String,
   dutyType: { type: String, enum: ["single", "multiple"], default: "single" },
-  dutyDate: Date,  // Used for both single and per-day record in multiple
-  fromDate: Date,  // Optional
-  toDate: Date,    // Optional
+  dutyDate: Date, // Used for both single and per-day record in multiple
+  fromDate: Date, // Optional
+  toDate: Date, // Optional
   batchNumber: String,
   remarks: String,
-});
+  dutyCategory: {
+  type: String,
+  enum: [
+    "Patrol",
+    "Security",
+    "VIP Escort",
+    "VIP Security",
+    "Investigation",
+    "Checkpoint",
+    "Court Duty",
+    "Traffic Control",
+    "Other"
+  ],
+  default: "Other"
+},
 
+});
 
 const Duty = mongoose.model("Duty", dutySchema);
 
@@ -356,6 +445,7 @@ app.post("/api/assign-duty", async (req, res) => {
       toDate,
       batchNumber,
       remarks,
+      dutyCategory,
     } = req.body;
 
     if (status.toLowerCase() !== "active") {
@@ -397,6 +487,7 @@ app.post("/api/assign-duty", async (req, res) => {
         toDate: new Date(toDate),
         batchNumber,
         remarks,
+        dutyCategory,
       });
 
       await duty.save();
@@ -412,7 +503,8 @@ app.post("/api/assign-duty", async (req, res) => {
 
       if (conflict) {
         return res.status(400).json({
-          message: "Policeman already assigned to another location on this day and shift",
+          message:
+            "Policeman already assigned to another location on this day and shift",
         });
       }
 
@@ -431,6 +523,7 @@ app.post("/api/assign-duty", async (req, res) => {
         dutyDate: date,
         batchNumber,
         remarks,
+        dutyCategory,
       });
 
       await newDuty.save();
@@ -443,28 +536,29 @@ app.post("/api/assign-duty", async (req, res) => {
   }
 });
 
-
 // API to get all duties
-app.get('/api/duties', async (req, res) => {
+app.get("/api/duties", async (req, res) => {
   try {
     const duties = await Duty.find();
     res.json(duties);
   } catch (error) {
-    res.status(500).json({ message: 'Error fetching duties', error });
+    res.status(500).json({ message: "Error fetching duties", error });
   }
 });
 
 // 🔹 PUT update duty by ID
-app.put('/api/duties/:id', async (req, res) => {
-  const { id } = req.params
+app.put("/api/duties/:id", async (req, res) => {
+  const { id } = req.params;
   try {
-    const updatedDuty = await Duty.findByIdAndUpdate(id, req.body, { new: true })
-    if (!updatedDuty) return res.status(404).json({ error: 'Duty not found' })
-    res.json(updatedDuty)
+    const updatedDuty = await Duty.findByIdAndUpdate(id, req.body, {
+      new: true,
+    });
+    if (!updatedDuty) return res.status(404).json({ error: "Duty not found" });
+    res.json(updatedDuty);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to update duty' })
+    res.status(500).json({ error: "Failed to update duty" });
   }
-})
+});
 
 // API to delete a duty by id
 app.delete("/api/duties/:id", async (req, res) => {
@@ -480,6 +574,113 @@ app.delete("/api/duties/:id", async (req, res) => {
   }
 });
 
+
+// Mongoose schema & model
+const policeUserSchema = new mongoose.Schema({
+  batchNo: { type: String, required: true, unique: true },
+  password: { type: String, required: true }, // hashed password
+  status: { type: String, required: true, default: "active" } // default value set here
+});
+
+const PoliceUserLogin = mongoose.model("PoliceUserLogin", policeUserSchema);
+
+// Routes
+
+// Add new police user
+app.post("/api/police-users", async (req, res) => {
+  try {
+    const { batchNo, password } = req.body;
+    if (!batchNo || !password) {
+      return res.status(400).json({ error: "BatchNo and password are required" });
+    }
+
+    // Hash password
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(password, saltRounds);
+
+    // Save to DB - status will default to 'active' automatically
+    const newUser = new PoliceUserLogin({ batchNo, password: hashedPassword });
+    await newUser.save();
+
+    res.status(201).json({ message: "Police user added successfully" });
+  } catch (error) {
+    if (error.code === 11000) {
+      // Duplicate batchNo error
+      return res.status(409).json({ error: "BatchNo already exists" });
+    }
+    console.error(error);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// Get all police users (including passwords)
+app.get("/api/police-users", async (req, res) => {
+  try {
+    const users = await PoliceUserLogin.find({}); // include all fields, including password
+    res.json(users);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+app.patch('/api/police-users/:id/status', async (req, res) => {
+  const { id } = req.params;
+  const { status } = req.body;
+
+  if (!['Active', 'Disabled'].includes(status)) {
+    return res.status(400).json({ error: 'Invalid status value' });
+  }
+
+  try {
+    const user = await PoliceUserLogin.findByIdAndUpdate(id, { status }, { new: true });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    res.json(user);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Delete police user by ID
+app.delete("/api/police-users/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const deletedUser = await PoliceUserLogin.findByIdAndDelete(id);
+    if (!deletedUser) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    res.json({ message: "User deleted successfully" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// API to get active police duties (customize filter if needed)
+app.get('/api/duties', async (req, res) => {
+  try {
+    const duties = await Duty.find({
+      status: { $in: ['On Patrol', 'Traffic Control', 'Responding to Incident'] }, // Example filter
+      xCoord: { $ne: null },
+      yCoord: { $ne: null }
+    })
+
+    const formatted = duties.map((duty) => ({
+      lat: duty.xCoord,
+      lng: duty.yCoord,
+      name: duty.name,
+      status: duty.status,
+      lastUpdated: 'Just now' // You can add logic to make this dynamic
+    }))
+
+    res.json(formatted)
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'Server Error' })
+  }
+})
 
 // Start server
 app.listen(PORT, () => {
