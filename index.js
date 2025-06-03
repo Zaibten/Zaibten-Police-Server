@@ -1012,6 +1012,112 @@ app.get('/charts/constablesCirclePacking', async (req, res) => {
   }
 })
 
+// Express Route
+app.get('/charts/constablesFunnel', async (req, res) => {
+  try {
+    const totalConstables = await Constable.countDocuments();
+    const activeConstables = await Constable.countDocuments({ status: 'Active' });
+
+    const today = new Date();
+    const lastMonth = new Date(today.setDate(today.getDate() - 30));
+    const joinedRecently = await Constable.countDocuments({
+      joiningDate: { $gte: lastMonth.toISOString().split('T')[0] }
+    });
+
+    res.json([
+      { id: 'Total Constables', value: totalConstables },
+      { id: 'Active Constables', value: activeConstables },
+      { id: 'Joined Recently', value: joinedRecently }
+    ]);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/charts/constableDutyFlow', async (req, res) => {
+  try {
+    const agg = await Duty.aggregate([
+      {
+        $group: {
+          _id: { policeStation: "$policeStation", dutyCategory: "$dutyCategory" },
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    // Get unique nodes
+    const nodeSet = new Set();
+    agg.forEach(item => {
+      nodeSet.add(item._id.policeStation);
+      nodeSet.add(item._id.dutyCategory);
+    });
+
+    const nodes = [...nodeSet].map(id => ({ id }));
+
+    const links = agg.map(item => ({
+      source: item._id.policeStation,
+      target: item._id.dutyCategory,
+      value: item.count
+    }));
+
+    res.json({ nodes, links });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/treemap-data', async (req, res) => {
+  try {
+    const data = await Constable.aggregate([
+      {
+        $group: {
+          _id: "$rank",
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    const treemapData = {
+      name: 'root',
+      children: data.map(rankGroup => ({
+        name: rankGroup._id || 'Unknown',
+        value: rankGroup.count
+      }))
+    };
+
+    res.json(treemapData);
+  } catch (err) {
+    console.error("Error generating TreeMap data:", err);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+app.get('/api/waffle-data', async (req, res) => {
+  try {
+    const result = await Constable.aggregate([
+      {
+        $group: {
+          _id: '$gender',
+          count: { $sum: 1 }
+        }
+      },
+      {
+        $project: {
+          id: '$_id',
+          label: '$_id',
+          value: '$count',
+          _id: 0
+        }
+      }
+    ]);
+
+    res.json(result);
+  } catch (err) {
+    console.error('Error fetching waffle data:', err);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
 
 // Start server
 app.listen(PORT, () => {
