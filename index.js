@@ -9,9 +9,10 @@ const fs = require("fs");
 const path = require("path");
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 const bcrypt = require("bcrypt");
+const { type } = require("os");
 
 // Load environment variables
-const PORT = process.env.PORT || 443;
+const PORT = process.env.PORT || 3000;
 const MongoURL = process.env.MongoURL;
 
 // Middlewares
@@ -49,6 +50,7 @@ const policeStationSchema = new mongoose.Schema(
     weapons: [String],
     vehicles: [String],
     image: { type: String }, // base64 image
+    district: { type: String, required: true },
   },
   { timestamps: true }
 );
@@ -681,6 +683,335 @@ app.get('/api/duties', async (req, res) => {
     res.status(500).json({ error: 'Server Error' })
   }
 })
+
+
+
+
+
+
+// Utility: get month-year string from date
+const getMonthYear = (date) => {
+  const d = new Date(date);
+  return `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}`;
+};
+
+// =========== API endpoints ===========
+
+// 1. Bar chart: PoliceStations per district
+app.get('/charts/policeStationsPerDistrict', async (req, res) => {
+  try {
+    const agg = await PoliceStation.aggregate([
+      { $group: { _id: '$district', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+    ]);
+    const data = agg.map(d => ({ country: d._id, value: d.count }));
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 2. Pie chart: Constables by gender
+app.get('/charts/constablesByGender', async (req, res) => {
+  try {
+    const agg = await Constable.aggregate([
+      { $group: { _id: '$gender', count: { $sum: 1 } } },
+    ]);
+    const data = agg.map(d => ({ id: d._id, label: d._id, value: d.count }));
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 3. Line chart: Duties count per month (by dutyDate)
+app.get('/charts/dutiesCountPerMonth', async (req, res) => {
+  try {
+    const duties = await Duty.aggregate([
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m", date: "$dutyDate" } },
+          count: { $sum: 1 }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]);
+    // Nivo line expects array of { id, data: [{ x, y }] }
+    const data = [{
+      id: 'Duties',
+      data: duties.map(d => ({ x: d._id, y: d.count })),
+    }];
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 4. Radar chart: Number of constables per rank and status (two series: status)
+app.get('/charts/constablesByRankAndStatus', async (req, res) => {
+  try {
+    // Get distinct statuses and ranks
+    const statuses = await Constable.distinct('status');
+    const ranks = await Constable.distinct('rank');
+
+    // Aggregate counts by rank and status
+    const agg = await Constable.aggregate([
+      { $group: { _id: { rank: '$rank', status: '$status' }, count: { $sum: 1 } } }
+    ]);
+
+    // Prepare data in format: [{ taste: rank, status1: val, status2: val, ...}]
+    const data = ranks.map(rank => {
+      let obj = { taste: rank };
+      statuses.forEach(status => {
+        const found = agg.find(a => a._id.rank === rank && a._id.status === status);
+        obj[status] = found ? found.count : 0;
+      });
+      return obj;
+    });
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 5. Heatmap: Duties count by dutyCategory per month
+app.get('/charts/dutiesHeatmap', async (req, res) => {
+  try {
+    const categories = await Duty.distinct('dutyCategory');
+    const months = await Duty.aggregate([
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m", date: "$dutyDate" } },
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]);
+    const monthLabels = months.map(m => m._id);
+
+    // Get count for each category x month
+    let heatmapData = [];
+    for (const cat of categories) {
+      let dataPerMonth = [];
+      for (const month of monthLabels) {
+        const count = await Duty.countDocuments({
+          dutyCategory: cat,
+          dutyDate: {
+            $gte: new Date(month + '-01'),
+            $lt: new Date((new Date(month + '-01').getMonth() + 1 === 12 ? (parseInt(month.slice(0,4))+1)+'-01-01' : month.slice(0,4) + '-' + (String(new Date(month + '-01').getMonth() + 2).padStart(2,'0')) + '-01'))
+          }
+        });
+        dataPerMonth.push({ x: month, y: count });
+      }
+      heatmapData.push({ id: cat, data: dataPerMonth });
+    }
+    res.json(heatmapData);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 6. Calendar heatmap: Duties per day for last 30 days
+app.get('/charts/dutiesCalendarHeatmap', async (req, res) => {
+  try {
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setDate(endDate.getDate() - 29);
+
+    // Aggregate duties per day between startDate and endDate
+    const duties = await Duty.aggregate([
+      {
+        $match: {
+          dutyDate: { $gte: startDate, $lte: endDate }
+        }
+      },
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m-%d", date: "$dutyDate" } },
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    // Fill missing days with 0 count
+    let dateMap = {};
+    duties.forEach(d => dateMap[d._id] = d.count);
+    let results = [];
+    for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+      const dayStr = d.toISOString().split('T')[0];
+      results.push({ day: dayStr, value: dateMap[dayStr] || 0 });
+    }
+
+    res.json(results);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 7. Chord chart: Weapons usage count among constables
+app.get('/charts/weaponsUsageChord', async (req, res) => {
+  try {
+    // Get all weapons arrays from constables
+    const allConstables = await Constable.find({}, { weapons: 1, _id: 0 });
+    let weaponsSet = new Set();
+    let matrix = [];
+    let weaponsList = [];
+
+    // Flatten weapons arrays and count co-occurrences (simplified)
+    allConstables.forEach(c => c.weapons.forEach(w => weaponsSet.add(w)));
+    weaponsList = Array.from(weaponsSet);
+
+    // Create co-occurrence matrix (simplified: diagonal = count of each weapon)
+    let counts = {};
+    weaponsList.forEach(w => counts[w] = 0);
+    allConstables.forEach(c => {
+      const uniqueWeapons = [...new Set(c.weapons)];
+      uniqueWeapons.forEach(w => counts[w]++);
+    });
+
+    // Matrix with counts on diagonal, zeros elsewhere (you can improve)
+    matrix = weaponsList.map(w => weaponsList.map(w2 => (w === w2 ? counts[w] : 0)));
+
+    res.json({ keys: weaponsList, matrix });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 8. Funnel chart: Number of police stations by jailCapacity ranges
+app.get('/charts/jailCapacityFunnel', async (req, res) => {
+  try {
+    const buckets = [
+      { label: '0-10', min: 0, max: 10 },
+      { label: '11-20', min: 11, max: 20 },
+      { label: '21-50', min: 21, max: 50 },
+      { label: '51-100', min: 51, max: 100 },
+      { label: '100+', min: 101, max: Number.MAX_SAFE_INTEGER },
+    ];
+    let data = [];
+    for (const bucket of buckets) {
+      const count = await PoliceStation.countDocuments({
+        jailCapacity: { $gte: bucket.min, $lte: bucket.max }
+      });
+      data.push({ id: bucket.label, value: count });
+    }
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 9. Stream chart: Number of constables joining per month by status (last 12 months)
+app.get('/charts/constablesJoiningStream', async (req, res) => {
+  try {
+    const now = new Date();
+    const months = [];
+    for (let i = 11; i >= 0; i--) {
+      let d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      months.push(d.toISOString().slice(0,7));
+    }
+
+    const statuses = await Constable.distinct('status');
+    const agg = await Constable.aggregate([
+      {
+        $match: {
+          joiningDate: { 
+            $gte: new Date(months[0] + '-01'),
+            $lte: new Date(now.getFullYear(), now.getMonth() + 1, 0)
+          }
+        }
+      },
+      {
+        $group: {
+          _id: { month: { $dateToString: { format: "%Y-%m", date: { $toDate: "$joiningDate" } } }, status: "$status" },
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    // Structure data: [{ id: status, data: [{ x: month, y: count }] }]
+    let result = statuses.map(status => {
+      return {
+        id: status,
+        data: months.map(month => {
+          const found = agg.find(a => a._id.month === month && a._id.status === status);
+          return { x: month, y: found ? found.count : 0 };
+        })
+      };
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 10. Area bump: Duties count per dutyCategory over years
+app.get('/charts/dutiesAreaBump', async (req, res) => {
+  try {
+    const years = await Duty.aggregate([
+      {
+        $group: {
+          _id: { $year: "$dutyDate" }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]);
+    const yearLabels = years.map(y => y._id.toString());
+
+    const categories = await Duty.distinct('dutyCategory');
+
+    const agg = await Duty.aggregate([
+      {
+        $group: {
+          _id: { year: { $year: "$dutyDate" }, dutyCategory: "$dutyCategory" },
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    let data = categories.map(category => {
+      return {
+        id: category,
+        data: yearLabels.map(year => {
+          const found = agg.find(a => a._id.year.toString() === year && a._id.dutyCategory === category);
+          return { x: year, y: found ? found.count : 0 };
+        })
+      };
+    });
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Count constables per police station for circle packing
+app.get('/charts/constablesCirclePacking', async (req, res) => {
+  try {
+    const groupedData = await Constable.aggregate([
+      {
+        $group: {
+          _id: '$policeStation',
+          count: { $sum: 1 }
+        }
+      },
+      {
+        $sort: { count: -1 }
+      }
+    ])
+
+    const formatted = {
+      name: 'root',
+      children: groupedData.map(g => ({
+        name: g._id,
+        value: g.count
+      }))
+    }
+
+    res.json(formatted)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 
 // Start server
 app.listen(PORT, () => {
