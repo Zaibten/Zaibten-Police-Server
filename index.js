@@ -11,7 +11,7 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 const bcrypt = require("bcrypt");
 
 // Load environment variables
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 443;
 const MongoURL = process.env.MongoURL;
 
 // Middlewares
