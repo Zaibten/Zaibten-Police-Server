@@ -12,7 +12,7 @@ const bcrypt = require("bcrypt");
 const { type } = require("os");
 
 // Load environment variables
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 443;
 const MongoURL = process.env.MongoURL;
 
 // Middlewares
