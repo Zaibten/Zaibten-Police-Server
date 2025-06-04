@@ -1118,6 +1118,20 @@ app.get('/api/waffle-data', async (req, res) => {
   }
 });
 
+// login api
+app.post('/api/login', (req, res) => {
+  const { email, password } = req.body;
+
+  const admin = process.env.ADMIN;
+  const adminPassword = process.env.PASSWORD;
+
+  if (email === process.env.ADMIN && password === process.env.PASSWORD) {
+    res.status(200).json({ message: 'Login successful', email });
+  } else {
+    res.status(401).json({ message: 'Invalid credentials' });
+  }
+});
+
 
 // Start server
 app.listen(PORT, () => {
