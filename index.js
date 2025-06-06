@@ -1454,7 +1454,6 @@ app.post('/api/checkin', async (req, res) => {
 });
 
 
-
 app.post('/api/live-location', async (req, res) => {
   try {
     const { badgeNumber, livexCoord, liveyCoord } = req.body;
@@ -1488,7 +1487,26 @@ app.post('/api/live-location', async (req, res) => {
       return res.status(404).json({ message: 'Active duty not found' });
     }
 
-    // Update live location fields
+    // Auto-stop logic: check if shift exists and if current time is within shift
+    if (!duty.shift || duty.shift.trim() === '') {
+      return res.status(400).json({ message: 'No shift assigned, location tracking stopped.' });
+    }
+
+    const shift = parseShift(duty.shift);
+    if (!shift) {
+      return res.status(400).json({ message: 'Invalid shift format, location tracking stopped.' });
+    }
+
+    const shiftStart = now.clone().hour(shift.start.hour()).minute(shift.start.minute()).second(0);
+    const shiftEnd = now.clone().hour(shift.end.hour()).minute(shift.end.minute()).second(0);
+    if (shiftEnd.isBefore(shiftStart)) shiftEnd.add(1, 'day');
+
+    if (!now.isBetween(shiftStart, shiftEnd, null, '[]')) {
+      // Outside shift time - stop updating location
+      return res.status(400).json({ message: 'Shift is over or not started yet, location tracking stopped.' });
+    }
+
+    // Update live location fields only if inside shift time
     duty.livexCoord = livexCoord;
     duty.liveyCoord = liveyCoord;
 
@@ -1501,6 +1519,54 @@ app.post('/api/live-location', async (req, res) => {
     return res.status(500).json({ message: 'Server error' });
   }
 });
+
+
+// app.post('/api/live-location', async (req, res) => {
+//   try {
+//     const { badgeNumber, livexCoord, liveyCoord } = req.body;
+
+//     if (!badgeNumber || livexCoord == null || liveyCoord == null) {
+//       return res.status(400).json({ message: 'Missing parameters' });
+//     }
+
+//     // Find the active duty for this badgeNumber (similar logic as before)
+//     const now = moment();
+//     const todayStart = now.clone().startOf('day').toDate();
+//     const todayEnd = now.clone().endOf('day').toDate();
+
+//     const duty = await Duty.findOne({
+//       badgeNumber,
+//       status: 'Active',
+//       $or: [
+//         {
+//           dutyType: 'single',
+//           dutyDate: { $gte: todayStart, $lte: todayEnd },
+//         },
+//         {
+//           dutyType: { $ne: 'single' },
+//           fromDate: { $lte: todayEnd },
+//           toDate: { $gte: todayStart },
+//         },
+//       ],
+//     });
+
+//     if (!duty) {
+//       return res.status(404).json({ message: 'Active duty not found' });
+//     }
+
+//     // Update live location fields
+//     duty.livexCoord = livexCoord;
+//     duty.liveyCoord = liveyCoord;
+
+//     await duty.save();
+
+//     return res.json({ message: 'Live location updated' });
+
+//   } catch (err) {
+//     console.error(err);
+//     return res.status(500).json({ message: 'Server error' });
+//   }
+// });
 
 app.get('/api/myduties/:badgeNumber', async (req, res) => {
   try {
