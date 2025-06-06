@@ -11,6 +11,8 @@ const { type } = require("os");
 const multer = require("multer");
 const { CloudinaryStorage } = require("multer-storage-cloudinary");
 const cloudinary = require("./cloudinary");
+const moment = require('moment');
+
 
 // Store cloudinary storage in 'const upload'
 const storage = new CloudinaryStorage({
@@ -405,6 +407,8 @@ const dutySchema = new mongoose.Schema({
   toDate: Date, // Optional
   batchNumber: String,
   remarks: String,
+  livexCoord: Number,
+  liveyCoord: Number,
   dutyCategory: {
     type: String,
     enum: [
@@ -1286,6 +1290,242 @@ let currentDuty = duties.find(d => {
   }
 });
 
+// Helper function: parse shift string "9am to 11pm" => { start, end }
+function parseShift(shiftStr) {
+  if (!shiftStr) return null;
+  const parts = shiftStr.toLowerCase().trim().split(' to ');
+  if (parts.length !== 2) return null;
+
+  const start = moment(parts[0].trim(), ['h:mm a', 'ha']);
+  const end = moment(parts[1].trim(), ['h:mm a', 'ha']);
+
+  if (!start.isValid() || !end.isValid()) return null;
+
+  if (end.isBefore(start)) end.add(1, 'day');
+  return { start, end };
+}
+
+// Helper: distance in meters between two lat/lon points
+function getDistanceFromLatLonInMeters(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const dLat = deg2rad(lat2 - lat1);
+  const dLon = deg2rad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+function deg2rad(deg) {
+  return deg * (Math.PI / 180);
+}
+
+// Main route
+app.post('/api/checkin', async (req, res) => {
+  try {
+    const { badgeNumber, currentX, currentY, currentTime } = req.body;
+    if (!badgeNumber || currentX == null || currentY == null) {
+      return res.status(400).json({ message: 'Missing parameters' });
+    }
+
+    const now = currentTime ? moment(currentTime) : moment();
+    const todayStart = now.clone().startOf('day').toDate();
+    const todayEnd = now.clone().endOf('day').toDate();
+    const todayDateStr = now.format('YYYY-MM-DD');
+
+    // Find today's duty
+    const duty = await Duty.findOne({
+      badgeNumber,
+      status: 'Active',
+      $or: [
+        {
+          dutyType: 'single',
+          dutyDate: {
+            $gte: todayStart,
+            $lte: todayEnd,
+          },
+        },
+        {
+          dutyType: { $ne: 'single' },
+          fromDate: { $lte: todayEnd },
+          toDate: { $gte: todayStart },
+        },
+      ],
+    });
+
+    if (!duty) {
+      return res.status(404).json({ message: 'Duty not found for today' });
+    }
+
+    // Check location distance function (you should have this implemented)
+    const distance = getDistanceFromLatLonInMeters(duty.xCoord, duty.yCoord, currentX, currentY);
+    if (distance > 500) {
+      return res.status(400).json({ message: 'You are not at the assigned location (within 500 meters)' });
+    }
+
+    // Parse shift time
+    const shift = parseShift(duty.shift);
+    if (!shift) return res.status(400).json({ message: 'Invalid shift format' });
+
+    const shiftStart = now.clone().hour(shift.start.hour()).minute(shift.start.minute()).second(0);
+    const shiftEnd = now.clone().hour(shift.end.hour()).minute(shift.end.minute()).second(0);
+    if (shiftEnd.isBefore(shiftStart)) shiftEnd.add(1, 'day');
+
+    if (!now.isBetween(shiftStart, shiftEnd, null, '[]')) {
+      return res.status(400).json({ message: 'Not within shift time' });
+    }
+
+    // Initialize checkIns and absences arrays if not exist
+    duty.checkIns = duty.checkIns || [];
+    duty.absences = duty.absences || [];
+
+    // Check if already checked in this shift today
+    const alreadyCheckedIn = duty.checkIns.some(ci =>
+      moment(ci.date).format('YYYY-MM-DD') === todayDateStr &&
+      ci.shift === duty.shift
+    );
+
+    if (alreadyCheckedIn) {
+      return res.status(400).json({ message: 'Already checked in for this shift today' });
+    }
+
+    // Add check-in record for today + shift
+    duty.checkIns.push({ date: now.toDate(), shift: duty.shift });
+
+    // Remove absence for this shift+date if exists (since now present)
+    duty.absences = duty.absences.filter(abs =>
+      !(moment(abs.date).format('YYYY-MM-DD') === todayDateStr && abs.shift === duty.shift)
+    );
+
+    // Calculate total days (for single or multiple duty)
+    const totalDays = duty.dutyType === 'single'
+      ? 1
+      : moment(duty.toDate).diff(moment(duty.fromDate), 'days') + 1;
+
+    // Calculate all expected shifts for duty period (simplified: one shift per day, or extend for multiple shifts)
+    // For demo: assume one shift per day for the duty period
+
+    // Calculate all days in duty period
+    let allDates = [];
+    if (duty.dutyType === 'single') {
+      allDates = [moment(duty.dutyDate)];
+    } else {
+      const start = moment(duty.fromDate);
+      const end = moment(duty.toDate);
+      for (let m = start.clone(); m.isSameOrBefore(end); m.add(1, 'days')) {
+        allDates.push(m.clone());
+      }
+    }
+
+    // For each date, check if a check-in exists for that shift; if not, mark absence
+    allDates.forEach(dateMoment => {
+      const dateStr = dateMoment.format('YYYY-MM-DD');
+      // If no check-in for shift on this day and no absence recorded yet, add absence
+      const hasCheckIn = duty.checkIns.some(ci => moment(ci.date).format('YYYY-MM-DD') === dateStr && ci.shift === duty.shift);
+      const hasAbsence = duty.absences.some(abs => moment(abs.date).format('YYYY-MM-DD') === dateStr && abs.shift === duty.shift);
+
+      if (!hasCheckIn && !hasAbsence && dateMoment.isBefore(moment(), 'day')) {
+        // Only mark absence for past days (not future)
+        duty.absences.push({ date: dateMoment.toDate(), shift: duty.shift });
+      }
+    });
+
+    // total present = count of unique check-in shift+date
+    const uniquePresent = new Set(duty.checkIns.map(ci => `${moment(ci.date).format('YYYY-MM-DD')}-${ci.shift}`));
+    duty.totalpresent = uniquePresent.size;
+
+    // total absent = count of absences recorded
+    duty.totalabsent = duty.absences.length;
+
+    await duty.save();
+
+    return res.json({
+      message: 'Check-in successful',
+      totalpresent: duty.totalpresent,
+      totalabsent: duty.totalabsent,
+    });
+
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+
+app.post('/api/live-location', async (req, res) => {
+  try {
+    const { badgeNumber, livexCoord, liveyCoord } = req.body;
+
+    if (!badgeNumber || livexCoord == null || liveyCoord == null) {
+      return res.status(400).json({ message: 'Missing parameters' });
+    }
+
+    // Find the active duty for this badgeNumber (similar logic as before)
+    const now = moment();
+    const todayStart = now.clone().startOf('day').toDate();
+    const todayEnd = now.clone().endOf('day').toDate();
+
+    const duty = await Duty.findOne({
+      badgeNumber,
+      status: 'Active',
+      $or: [
+        {
+          dutyType: 'single',
+          dutyDate: { $gte: todayStart, $lte: todayEnd },
+        },
+        {
+          dutyType: { $ne: 'single' },
+          fromDate: { $lte: todayEnd },
+          toDate: { $gte: todayStart },
+        },
+      ],
+    });
+
+    if (!duty) {
+      return res.status(404).json({ message: 'Active duty not found' });
+    }
+
+    // Update live location fields
+    duty.livexCoord = livexCoord;
+    duty.liveyCoord = liveyCoord;
+
+    await duty.save();
+
+    return res.json({ message: 'Live location updated' });
+
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: 'Server error' });
+  }
+});
+
+app.get('/api/myduties/:badgeNumber', async (req, res) => {
+  try {
+    const badgeNumber = req.params.badgeNumber;
+    console.log('BadgeNumber from request:', badgeNumber);
+
+    if (!badgeNumber) {
+      return res.status(400).json({ message: 'Badge number is required' });
+    }
+
+    // Try exact match
+    const duties = await Duty.find({ badgeNumber: badgeNumber.trim() });
+
+    console.log('Duties found:', duties);
+
+    if (!duties || duties.length === 0) {
+      return res.status(404).json({ message: 'No duties found for this badge number' });
+    }
+
+    return res.json({ duties });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: 'Server error' });
+  }
+});
 
 
 
