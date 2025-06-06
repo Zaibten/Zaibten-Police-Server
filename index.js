@@ -420,6 +420,9 @@ const dutySchema = new mongoose.Schema({
     ],
     default: "Other",
   },
+  
+  totalpresent: String,
+  totalabsent:String,
 });
 
 const Duty = mongoose.model("Duty", dutySchema);
@@ -1173,6 +1176,118 @@ app.post("/api/login", (req, res) => {
     res.status(401).json({ message: "Invalid credentials" });
   }
 });
+
+
+// 🟦 Login API
+app.post('/moblogin', async (req, res) => {
+  const { batchNo, password } = req.body;
+
+  try {
+    const user = await PoliceUserLogin.findOne({ batchNo });
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found", status: "notfound" });
+    }
+
+    if (user.status !== "active") {
+      return res.status(403).json({ message: "User is not active", status: user.status });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(401).json({ message: "Invalid password", status: "invalid" });
+    }
+
+    return res.status(200).json({ message: "Login successful", user, status: user.status });
+  } catch (err) {
+    console.error("Login error:", err);
+    res.status(500).json({ message: "Server error", status: "error" });
+  }
+});
+
+// API: Get Dashboard Data by Batch Number
+app.get("/api/dashboard/:batchNo", async (req, res) => {
+  try {
+    const batchNo = req.params.batchNo;
+    const today = new Date().toISOString().slice(0, 10); // "2025-06-06"
+
+    const duties = await Duty.find({ badgeNumber: batchNo });
+    const constable = await Constable.findOne({ badgeNumber: batchNo });
+
+    const activeDuties = duties.filter(d => d.status === "Active").length;
+    const hasCoordinates = duties.some(d => d.xCoord && d.yCoord);
+
+    const latestDuty = duties.sort((a, b) => new Date(b.dutyDate) - new Date(a.dutyDate))[0];
+
+    // Get today's duty based on shift time logic
+const todayDate = new Date();
+todayDate.setHours(0, 0, 0, 0);  // Midnight today
+
+const currentHour = new Date().getHours();
+
+let currentDuty = duties.find(d => {
+  if (!d.shift || !d.dutyDate) return false;
+
+  const dutyDate = new Date(d.dutyDate);
+  dutyDate.setHours(0, 0, 0, 0);
+
+  // Ignore duties before today
+  if (dutyDate < todayDate) return false;
+
+  // Normalize shift string and parse
+  const shiftStr = d.shift.toLowerCase().replace(/\s+/g, '');
+  const [startStr, endStr] = shiftStr.split("to");
+  if (!startStr || !endStr) return false;
+
+  const parseHour = s => {
+    const match = s.match(/^(\d+)(am|pm)$/);
+    if (!match) return null;
+    let hour = parseInt(match[1], 10);
+    const meridian = match[2];
+    if (meridian === 'pm' && hour !== 12) hour += 12;
+    if (meridian === 'am' && hour === 12) hour = 0;
+    return hour;
+  };
+
+  const startHour = parseHour(startStr);
+  const endHour = parseHour(endStr);
+  if (startHour === null || endHour === null) return false;
+
+  if (dutyDate.getTime() === todayDate.getTime()) {
+    // For today, check if currentHour is before or inside the shift
+    if (startHour <= endHour) {
+      return currentHour >= startHour && currentHour <= endHour;
+    } else {
+      // Overnight shift (e.g., 9pm to 6am)
+      return currentHour >= startHour || currentHour <= endHour;
+    }
+  } else {
+    // Future duty date, consider it upcoming
+    return true;
+  }
+});
+
+
+
+    res.json({
+      activeDuties,
+      myCoordinates: hasCoordinates ? 1 : 0,
+      totalPresent: latestDuty?.totalpresent || "0",
+      totalAbsent: latestDuty?.totalabsent || "0",
+      name: constable?.fullName || "-",
+      batchNo,
+      xCoord: currentDuty?.xCoord || null,
+      yCoord: currentDuty?.yCoord || null,
+      location: currentDuty?.location || "No Active Duty",
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Server error", error });
+  }
+});
+
+
+
 
 // Start server
 app.listen(PORT, () => {
