@@ -12,6 +12,7 @@ const multer = require("multer");
 const { CloudinaryStorage } = require("multer-storage-cloudinary");
 const cloudinary = require("./cloudinary");
 const moment = require('moment');
+const nodemailer = require('nodemailer');
 
 
 // Store cloudinary storage in 'const upload'
@@ -1590,6 +1591,94 @@ app.get('/api/myduties/:badgeNumber', async (req, res) => {
   } catch (err) {
     console.error(err);
     return res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// API to get constables by batchNo
+app.get('/api/constables/:batchNo', async (req, res) => {
+  const 
+badgeNumber = req.params.batchNo;
+
+  try {
+    const constables = await Constable.find({ 
+badgeNumber });
+    if (!constables || constables.length === 0) {
+      return res.status(404).json({ message: 'No constables found for this batch' });
+    }
+    res.json(constables);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: 'muzamilkhanofficial786@gmail.com',
+    pass: 'nvpr auci nxwv lucq'  // Your app password here
+  }
+});
+
+// Your existing routes here...
+
+app.post('/send-simple-email', async (req, res) => {
+  try {
+    const { batchNo } = req.body;
+
+    const emailHTML = `
+      <div style="font-family: 'Segoe UI', sans-serif; background-color: #f0f4f8; padding: 40px 20px;">
+        <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 24px rgba(0, 0, 0, 0.05);">
+          
+          <!-- Header -->
+          <div style="text-align: center; background-color: #1a73e8; padding: 40px 20px;">
+            <img 
+              src="https://res.cloudinary.com/dvqxt7y7h/image/upload/v1749280294/xbbhof1qz92qj0qv97jz.png" 
+              alt="PMS Logo"
+              style="width: 90px; height: 90px; border-radius: 50%; background-color: #ffffff; padding: 5px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);"
+            />
+            <h1 style="color: #ffffff; font-size: 24px; margin: 20px 0 5px;">PMS Management System</h1>
+            <p style="color: #d0e3ff; font-size: 16px; margin: 0;">Password Forget Request</p>
+          </div>
+
+          <!-- Content -->
+          <div style="padding: 30px 25px 40px;">
+            <p style="font-size: 16px; color: #444444; margin-bottom: 20px;">
+              A user has requested to reset their password using the following batch number:
+            </p>
+
+            <div style="text-align: center; margin: 30px 0;">
+              <span style="display: inline-block; font-size: 20px; font-weight: 600; color: #1a73e8; background-color: #e8f0fe; padding: 14px 32px; border-radius: 40px; letter-spacing: 1px;">
+                ${batchNo || 'Not Provided'}
+              </span>
+            </div>
+
+            <p style="font-size: 14px; color: #666666;">
+              Please review this request and proceed with the necessary verification and support. This message was generated automatically. If you believe this is a mistake, please disregard this email.
+            </p>
+
+            <hr style="border: none; border-top: 1px solid #eeeeee; margin: 30px 0;"/>
+
+            <p style="font-size: 13px; color: #999999; text-align: center;">
+              &copy; ${new Date().getFullYear()} PMS Management System. All rights reserved.
+            </p>
+          </div>
+        </div>
+      </div>
+    `;
+
+    await transporter.sendMail({
+      from: '"PMS Management System" <muzamilkhanofficial786@gmail.com>',
+      to: 'zaibtendev@gmail.com',
+      subject: 'Password Forget Request',
+      html: emailHTML,
+    });
+
+    res.json({ message: 'Email sent successfully!' });
+  } catch (error) {
+    console.error('Error sending email:', error);
+    res.status(500).json({ error: 'Failed to send email' });
   }
 });
 
