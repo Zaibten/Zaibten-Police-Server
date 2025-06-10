@@ -1526,8 +1526,8 @@ badgeNumber });
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
-    user: 'muzamilkhanofficial786@gmail.com',
-    pass: 'nvpr auci nxwv lucq'  // Your app password here
+    user: 'policedutymanagementsystem@gmail.com',
+    pass: 'pzbm emug lyka sxzo'  // Your app password here
   }
 });
 
@@ -1579,8 +1579,8 @@ app.post('/send-simple-email', async (req, res) => {
     `;
 
     await transporter.sendMail({
-      from: '"PMS Management System" <muzamilkhanofficial786@gmail.com>',
-      to: 'zaibtendev@gmail.com',
+      from: '"PMS Management System" <policedutymanagementsystem@gmail.com>',
+      to: 'developer.sarmadali@gmail.com',
       subject: 'Password Forget Request',
       html: emailHTML,
     });
