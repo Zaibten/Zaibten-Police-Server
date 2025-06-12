@@ -14,6 +14,14 @@ const cloudinary = require("./cloudinary");
 const moment = require('moment');
 const nodemailer = require('nodemailer');
 
+const { Vonage } = require('@vonage/server-sdk');
+
+const vonage = new Vonage({
+  apiKey: process.env.VONAGE_API_KEY,
+  apiSecret: process.env.VONAGE_API_SECRET,
+});
+
+
 
 // Store cloudinary storage in 'const upload'
 const storage = new CloudinaryStorage({
@@ -433,6 +441,13 @@ const dutySchema = new mongoose.Schema({
 const Duty = mongoose.model("Duty", dutySchema);
 
 // API to assign duty
+const client = require("twilio")(
+  process.env.TWILIO_ACCOUNT_SID,
+  process.env.TWILIO_AUTH_TOKEN
+);
+
+
+
 app.post("/api/assign-duty", async (req, res) => {
   try {
     const {
@@ -476,7 +491,6 @@ app.post("/api/assign-duty", async (req, res) => {
         });
       }
 
-      // ✅ Insert only one record for the full range
       const duty = new Duty({
         badgeNumber,
         name,
@@ -489,7 +503,7 @@ app.post("/api/assign-duty", async (req, res) => {
         yCoord,
         shift,
         dutyType,
-        dutyDate: fromDate, // optional or set to null
+        dutyDate: fromDate,
         fromDate: new Date(fromDate),
         toDate: new Date(toDate),
         batchNumber,
@@ -536,12 +550,32 @@ app.post("/api/assign-duty", async (req, res) => {
       await newDuty.save();
     }
 
+    // ✅ Send SMS
+const message = `Dear ${name}, your duty assignment at ${location} for the ${shift} shift has been confirmed. Kindly ensure timely reporting.`;
+
+    vonage.sms.send(
+      {
+        to: `92${contact.slice(-10)}`, // assumes Pakistani number like 03363506933
+        from: "PoliceDept",
+        text: message,
+      },
+      (err, responseData) => {
+        if (err) {
+          console.error("SMS Error:", err);
+        } else {
+          console.log("SMS sent:", responseData);
+        }
+      }
+    );
+
     res.json({ message: "Duty assigned successfully" });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });
   }
 });
+
+
 
 // API to get all duties
 app.get("/api/duties", async (req, res) => {
